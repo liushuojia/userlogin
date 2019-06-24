@@ -17,6 +17,8 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/astaxie/beego"
+
 	"github.com/gohouse/gorose"
 	_ "github.com/gohouse/gorose/driver/mysql"
 )
@@ -48,13 +50,14 @@ func ( sqlDB *SqlDB ) Connect() ( err error) {
 
 	fmt.Println(connection)
 	if connection == nil {
+
 		var DbConfig = &gorose.DbConfigSingle {
 			Driver:          "mysql", // 驱动: mysql/sqlite/oracle/mssql/postgres
 			EnableQueryLog:  true,   // 是否开启sql日志
 			SetMaxOpenConns: 0,    // (连接池)最大打开的连接数，默认值为0表示不限制
 			SetMaxIdleConns: 0,    // (连接池)闲置的连接数
 			Prefix:          "", // 表前缀
-			Dsn:             "root:liushuojia@tcp(127.0.0.1:3306)/TUserDB?charset=utf8", // 数据库链接
+			Dsn:             beego.AppConfig.String("mysql::host"), // 数据库链接
 		}
 		connection, err = gorose.Open(DbConfig)
 
