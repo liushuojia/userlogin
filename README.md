@@ -20,3 +20,4 @@ redis github.com/garyburd/redigo/redis
 如果用户未登录 使用接口前需获取一个授权 token  xxxx-asdfsxxxxxxxadf  第一位为linux时间戳 第二位为加密Md字符串
 
 
+发送短信/邮件 只是写进redis, 由独立的模块处理
