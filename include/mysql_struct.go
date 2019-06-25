@@ -47,8 +47,6 @@ func ( sqlDB *SqlDB ) FieldInit() () {
 }
 
 func ( sqlDB *SqlDB ) Connect() ( err error) {
-
-	fmt.Println(connection)
 	if connection == nil {
 
 		var DbConfig = &gorose.DbConfigSingle {

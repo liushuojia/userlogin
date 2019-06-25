@@ -2,7 +2,7 @@ package conf
 
 import (
 	"fmt"
-	"encoding/json"
+	//"encoding/json"
 	"errors"
 
 	"github.com/astaxie/beego"
@@ -10,15 +10,17 @@ import (
 
 )
 
+type RedisConn struct {
+	Conn redis.Conn
+}
 
-var RedisConn redis.Conn
-func ConnectRedis() ( err error ) {
+func (c *RedisConn) Connect() ( err error ) {
 	var connFlag bool = true
-	if RedisConn==nil {
+	if c.Conn==nil {
 		connFlag = true
 	}else{
-		ping, _ := redis.String(RedisConn.Do("PING"));
-		if( (ping)=="PONG" ){
+		ping, _ := redis.String(c.Conn.Do("PING"));
+		if( ping=="PONG" ){
 			connFlag = false
 		}
 	}
@@ -26,98 +28,91 @@ func ConnectRedis() ( err error ) {
 		redis_host := beego.AppConfig.String("redis::host")
 		redis_passwd := beego.AppConfig.String("redis::passwd")
 		redis_db,_ := beego.AppConfig.Int("redis::db")
+		c.Conn, err = redis.Dial("tcp", redis_host);
 
-		if RedisConn, err = redis.Dial("tcp", redis_host); err != nil {
+		if  err != nil {
 			return
 		}
-
-		if _, err = RedisConn.Do("AUTH", redis_passwd); err != nil {
-			RedisConn.Close()
+		if _, err = c.Conn.Do("AUTH", redis_passwd); err != nil {
+			c.Close()
 			return
 		}
-
-		if _, err = RedisConn.Do("SELECT", redis_db); err != nil {
-			RedisConn.Close()
-			return
+		if redis_db>0 {
+			if _, err = c.Conn.Do("SELECT", redis_db); err != nil {
+				c.Close()
+				return
+			}			
 		}
 	}
 	return
 }
 
-func CloseRedis() {
-	if( RedisConn!=nil ){
-		RedisConn.Close()
-		RedisConn = nil
+func (c *RedisConn) Close() {
+	if( c.Conn!=nil ){
+		c.Conn.Close()
+		c.Conn = nil
 	}
+	return
+	fmt.Println(c.Conn)
+	return
 }
 
-func RedisGet( key string ) ( value string, err error ){
-
-	if err = ConnectRedis(); err != nil {
+func (c RedisConn) Set( rdKey string, rdVal string, rdExTime int64 ) (err error) {
+	if err = c.Connect(); err != nil {
 		return
 	}
-	defer CloseRedis()
 
-	num, err := redis.Int( RedisConn.Do("EXISTS", key ) )
+	c.Conn.Do("set", rdKey, rdVal)
+	if rdExTime>0 {
+		c.Conn.Do("Expire", rdKey, rdExTime)
+	}
+	return
+}
+
+func (c RedisConn) EXISTS( key string ) ( is_key_exit bool, err error ){
+	if err = c.Connect(); err != nil {
+		return
+	}
+
+	is_key_exit, err = redis.Bool( c.Conn.Do("EXISTS", key) )
 
 	if err != nil {
 		return
 	}
-	if( num==0 ) {
-		err = errors.New("验证码已经失效,请重新获取")
-		return
-	}
-
-	value, err = redis.String(RedisConn.Do("GET", key))
 	return
 }
 
 
-func GetSmsCode(mobile string) ( smscode string,err error ){
+func (c RedisConn) Get( key string ) ( value string, err error ){
 
-	checkKey := beego.AppConfig.String("sms::checkKey") + "_" + mobile
+	if err = c.Connect(); err != nil {
+		return
+	}
 
-	smscode, err = RedisGet( checkKey )
+	if_exit, err := c.EXISTS(key)
+	if err != nil {
+		return
+	}
+	if if_exit==false {
+		err = errors.New("数据已经过期")
+		return
+	}
+
+	value, err = redis.String(c.Conn.Do("GET", key))
 	return
 }
 
-
-//  smsKey = "SmsQueue"             //短信发送队列
-//    smsCheckKey = "SmsCheck"        //短信检验数据
-func SendSms(mobile string, smscode string) ( err error) {
-	
-	if err = ConnectRedis(); err != nil {
-		return
-	}
-	defer CloseRedis()
-
-	queueKey := beego.AppConfig.String("sms::queueKey")
-	checkKey := beego.AppConfig.String("sms::checkKey") + "_" + mobile
-
-	num, err := redis.Int( RedisConn.Do("EXISTS", checkKey ) )
-	if err != nil {
-		return
-	}
-	if( num>0 ) {
-		err = errors.New("短信已发送过了, 请60秒后重新获取")
+//队列管理插入队列
+func (c RedisConn) RPush( key string, val string ) ( err error ){
+	if err = c.Connect(); err != nil {
 		return
 	}
 
-	_, err = RedisConn.Do("set", checkKey, smscode , "EX", "60")
+	_, err = c.Conn.Do("rPush", key, val )
 	if err != nil {
 		return
 	}
 
-	tmpArray := make( map[string]string )
-	tmpArray["mobile"] = mobile
-	tmpArray["content"] = "您的验证码是：" + smscode + "。请不要把验证码泄露给其他人。"
-	j, _ := json.Marshal(tmpArray)
-	_, err = RedisConn.Do("rPush", queueKey, string(j))
-	if err != nil {
-		return
-	}
-	return
-	fmt.Println(err)
 	return
 }
 
