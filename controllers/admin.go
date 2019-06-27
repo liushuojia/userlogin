@@ -285,14 +285,14 @@ func (c *AdminController) Login() {
 	mobile := c.GetString("mobile")
 	smscode := c.GetString("code")
 
-
 	checkKey := beego.AppConfig.String("sms::checkKey") + "_" + mobile
 
 	var redisObj conf.RedisConn
 	defer redisObj.Close()
+
 	value, err := redisObj.Get( checkKey )
 	if err!=nil {
-		c.error(err)
+		c.error(errors.New("验证码已经过期,请您重新获取"))
 		return
 	}
 
@@ -322,12 +322,19 @@ func (c *AdminController) Login() {
 	}
 	
 	userAgent := c.Ctx.Request.Header.Get("User-Agent")
-	BMD5String := buildUid( Admin, userAgent )
+	token := buildUid( Admin, userAgent )
+
+	adminJson, _ := json.Marshal(Admin)
+	redisKey := "admin_id_" + conf.SetValueToType(Admin.Admin_id,"string").(string)
+	if err := redisObj.Set( redisKey, string(adminJson), 24*60*60); err != nil {
+		c.error(err)
+		return
+	}
 
 	returnMap := make (map[string] interface{})
 	returnMap["flag"] = 0
 	returnMap["msg"] = "获取成功"
-	returnMap["data"] = BMD5String
+	returnMap["data"] = token
 	c.Data["json"] = returnMap
 	c.ServeJSON()
 	return
@@ -382,45 +389,6 @@ func (c *AdminController) SendSms() {
 
 	c.Data["json"] = returnMap
 	c.ServeJSON()
-}
-
-
-
-//  smsKey = "SmsQueue"             //短信发送队列
-//    smsCheckKey = "SmsCheck"        //短信检验数据
-func SendSmsAction(mobile string, smscode string) ( err error) {
-	
-	queueKey := beego.AppConfig.String("sms::queueKey")
-	checkKey := beego.AppConfig.String("sms::checkKey") + "_" + mobile
-
-	var redisObj conf.RedisConn
-	defer redisObj.Close()
-
-	if_exit, err := redisObj.EXISTS( checkKey )
-	if err != nil {
-		return
-	}
-
-	if( if_exit==true ) {
-		err = errors.New("短信已发送过了, 请60秒后重新获取")
-		return
-	}
-
-	err = redisObj.Set( checkKey, smscode, 60 )
-	if err != nil {
-		return
-	}
-
-	tmpArray := make( map[string]string )
-	tmpArray["mobile"] = mobile
-	tmpArray["content"] = "您的验证码是：" + smscode + "。请不要把验证码泄露给其他人。"
-	j, _ := json.Marshal(tmpArray)
-
-	err = redisObj.RPush( queueKey, string(j))
-	if err != nil {
-		return
-	}
-	return
 }
 
 
@@ -496,16 +464,17 @@ func (c *AdminController) GetToken() {
 			token 放在redis里面, 方便设置有效期
 		*/
 		token := buildUid( Admin, userAgent )
-		/*
 		adminJson, _ := json.Marshal(Admin)
-		if err := conf.RedisSet(token,string(adminJson), 24*60*60); err != nil {
+
+		var redisObj conf.RedisConn
+		defer redisObj.Close()
+
+		redisKey := "admin_id_" + conf.SetValueToType(Admin.Admin_id,"string").(string)
+
+		if err := redisObj.Set(redisKey,string(adminJson), 24*60*60); err != nil {
 			c.error(err)
 			return
 		}
-		conf.RedisSet
-		*/
-
-
 
 		returnMap["flag"] = 0
 		returnMap["msg"] = "获取成功"
@@ -514,6 +483,67 @@ func (c *AdminController) GetToken() {
 		c.ServeJSON()
 	}
 }
+
+// @Title Status
+// @Description check status
+// @Success 200 {string} success
+// @router /status [get]
+func (c *AdminController) Status() {
+	if err := c.checkToken(); err != nil {
+		c.error(err)
+		return
+	}
+
+	returnMap := make (map[string] interface{})
+	returnMap["flag"] = 0
+	returnMap["msg"] = "token 有效"
+	c.Data["json"] = returnMap
+	c.ServeJSON()
+}
+
+/*
+	操作function
+
+*/
+
+
+//  smsKey = "SmsQueue"             //短信发送队列
+//    smsCheckKey = "SmsCheck"        //短信检验数据
+func SendSmsAction(mobile string, smscode string) ( err error) {
+	
+	queueKey := beego.AppConfig.String("sms::queueKey")
+	checkKey := beego.AppConfig.String("sms::checkKey") + "_" + mobile
+
+	var redisObj conf.RedisConn
+	defer redisObj.Close()
+
+	if_exit, err := redisObj.EXISTS( checkKey )
+	if err != nil {
+		return
+	}
+
+	if( if_exit==true ) {
+		err = errors.New("短信已发送过了, 请60秒后重新获取")
+		return
+	}
+
+	err = redisObj.Set( checkKey, smscode, 60 )
+	if err != nil {
+		return
+	}
+
+	tmpArray := make( map[string]string )
+	tmpArray["mobile"] = mobile
+	tmpArray["content"] = "您的验证码是：" + smscode + "。请不要把验证码泄露给其他人。"
+	j, _ := json.Marshal(tmpArray)
+
+	err = redisObj.RPush( queueKey, string(j))
+	if err != nil {
+		return
+	}
+	return
+}
+
 
 func buildUid( dataAdmin models.Admin, userAgent string ) ( uid string ) {
 	data := map[string]interface{}  {
@@ -568,20 +598,41 @@ func (c *AdminController) checkToken() (err error) {
 			break;
 		}
 
-
 		if( (time.Now().Unix() - int64(timestamp))>24*60*60 ) {
 			err = errors.New("token 超时");
 			break;
 		}
 
+
+		/*
+			写进redis 判断用cache数据做
+		*/
+		var redisObj conf.RedisConn
+		defer redisObj.Close()
+
+		redisKey := "admin_id_" + conf.SetValueToType(id,"string").(string)
+
+		adminJson,err := redisObj.Get(redisKey)
+		if err!=nil {
+			err = errors.New("token 超时");
+			break;
+		}
+
+		err = json.Unmarshal( []byte(adminJson), &AdminToken)
+		if err!=nil {
+			err = errors.New("token 超时");
+			break;
+		}
+
+		/*
 		AdminDB := Admin.InitDB()
 		defer AdminDB.Close()
-
 
 		if err := AdminDB.GetOne( &AdminToken, int64(id) ); err!=nil {
 			err = errors.New("token 传递错误");
 			break;
 		}
+		*/
 
 		if( AdminToken.Admin_status==0 ){
 			err = errors.New("账号已停用");

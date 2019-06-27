@@ -25,7 +25,7 @@ func main() {
 
 var Md5Key string = "aaabbbccc000111222333123"
 var IDNUN int = 32
-var AddNum int = 123456
+var AddNum int = 1234568
 
 func BuildToken( data map[string]interface{}  ) ( uid string ) {
 

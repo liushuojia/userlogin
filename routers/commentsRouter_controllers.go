@@ -79,4 +79,13 @@ func init() {
             Filters: nil,
             Params: nil})
 
+    beego.GlobalControllerRouter["user-api/controllers:AdminController"] = append(beego.GlobalControllerRouter["user-api/controllers:AdminController"],
+        beego.ControllerComments{
+            Method: "Status",
+            Router: `/status`,
+            AllowHTTPMethods: []string{"get"},
+            MethodParams: param.Make(),
+            Filters: nil,
+            Params: nil})
+
 }
