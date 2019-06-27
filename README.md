@@ -24,6 +24,7 @@ redis github.com/garyburd/redigo/redis
 
 
 nginx 做跨域转发配置
+
 server {
         listen 80;
         server_name  user.xxx.com;
