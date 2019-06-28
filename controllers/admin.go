@@ -208,6 +208,9 @@ func (c *AdminController) Put() {
 		return
 	}
 
+	deleteRedisAdminData(int64(id))
+
+
 	returnMap := make (map[string] interface{})	
 	returnMap["flag"] = 0
 	tmp := conf.SetValueToType(num,"string")
@@ -252,6 +255,8 @@ func (c *AdminController) Delete() {
 
 	if num,err := AdminDB.Delete(searchKey); err == nil {
 		//c.Ctx.Output.SetStatus(204)
+		deleteRedisAdminData(int64(id))
+		
 		returnMap := make (map[string] interface{})
 		returnMap["flag"] = 0
 		tmp := conf.SetValueToType(num,"string")
@@ -321,15 +326,11 @@ func (c *AdminController) Login() {
 		return
 	}
 	
+
 	userAgent := c.Ctx.Request.Header.Get("User-Agent")
 	token := buildUid( Admin, userAgent )
 
-	adminJson, _ := json.Marshal(Admin)
-	redisKey := "admin_id_" + conf.SetValueToType(Admin.Admin_id,"string").(string)
-	if err := redisObj.Set( redisKey, string(adminJson), 24*60*60); err != nil {
-		c.error(err)
-		return
-	}
+	resetRedisAdminData(Admin)
 
 	returnMap := make (map[string] interface{})
 	returnMap["flag"] = 0
@@ -464,17 +465,8 @@ func (c *AdminController) GetToken() {
 			token 放在redis里面, 方便设置有效期
 		*/
 		token := buildUid( Admin, userAgent )
-		adminJson, _ := json.Marshal(Admin)
 
-		var redisObj conf.RedisConn
-		defer redisObj.Close()
-
-		redisKey := "admin_id_" + conf.SetValueToType(Admin.Admin_id,"string").(string)
-
-		if err := redisObj.Set(redisKey,string(adminJson), 24*60*60); err != nil {
-			c.error(err)
-			return
-		}
+		resetRedisAdminData(Admin)
 
 		returnMap["flag"] = 0
 		returnMap["msg"] = "获取成功"
@@ -544,7 +536,9 @@ func SendSmsAction(mobile string, smscode string) ( err error) {
 	return
 }
 
-
+/*
+	构建token最后一段的MD5
+*/
 func buildUid( dataAdmin models.Admin, userAgent string ) ( uid string ) {
 	data := map[string]interface{}  {
 		"Key" : Md5Key,
@@ -557,6 +551,9 @@ func buildUid( dataAdmin models.Admin, userAgent string ) ( uid string ) {
 	return
 }
 
+/*
+	错误返回
+*/
 func (c *AdminController) error( err error ) {
 	returnMap := make (map[string] interface{})
 	returnMap["flag"] = 1
@@ -565,6 +562,42 @@ func (c *AdminController) error( err error ) {
 	c.ServeJSON()
 }
 
+
+/*
+	重新设置用户的信息
+*/
+func resetRedisAdminData( adminData models.Admin )(err error)  {
+	var redisObj conf.RedisConn
+	defer redisObj.Close()
+
+	redisSaveTime,_ := beego.AppConfig.Int("admin::redisSaveTime")
+	redisPrefix := beego.AppConfig.String("admin::redisPrefix")
+	redisKey := redisPrefix + conf.SetValueToType(adminData.Admin_id,"string").(string)
+
+	adminJson, _ := json.Marshal(adminData)
+
+	err = redisObj.Set( redisKey, string(adminJson), int64(redisSaveTime));
+
+	return
+}
+
+func deleteRedisAdminData( id int64 )(err error)  {
+	var redisObj conf.RedisConn
+	defer redisObj.Close()
+
+	redisPrefix := beego.AppConfig.String("admin::redisPrefix")
+	redisKey := redisPrefix + conf.SetValueToType(id,"string").(string)
+
+	err = redisObj.Del( redisKey);
+
+	return
+}
+
+
+
+/*
+	验证header传递过来的token是否正确
+*/
 func (c *AdminController) checkToken() (err error) {
 	token := c.Ctx.Request.Header.Get("token")
 	userAgent := c.Ctx.Request.Header.Get("User-Agent")
@@ -604,35 +637,33 @@ func (c *AdminController) checkToken() (err error) {
 		}
 
 
-		/*
-			写进redis 判断用cache数据做
-		*/
 		var redisObj conf.RedisConn
 		defer redisObj.Close()
 
-		redisKey := "admin_id_" + conf.SetValueToType(id,"string").(string)
+
+		redisPrefix := beego.AppConfig.String("admin::redisPrefix")
+		redisKey := redisPrefix + conf.SetValueToType(id,"string").(string)
 
 		adminJson,err := redisObj.Get(redisKey)
 		if err!=nil {
-			err = errors.New("token 超时");
-			break;
-		}
+			//临时数据过期
+			AdminDB := Admin.InitDB()
+			defer AdminDB.Close()
 
-		err = json.Unmarshal( []byte(adminJson), &AdminToken)
-		if err!=nil {
-			err = errors.New("token 超时");
-			break;
-		}
+			if err := AdminDB.GetOne( &AdminToken, int64(id) ); err!=nil {
+				err = errors.New("账号已删");
+				break
+			}
+			//重新获取到数据后, 重新将数据写入redis
+			resetRedisAdminData(AdminToken)
 
-		/*
-		AdminDB := Admin.InitDB()
-		defer AdminDB.Close()
-
-		if err := AdminDB.GetOne( &AdminToken, int64(id) ); err!=nil {
-			err = errors.New("token 传递错误");
-			break;
+		}else{
+			err = json.Unmarshal( []byte(adminJson), &AdminToken)
+			if err!=nil {
+				err = errors.New("token 超时");
+				break
+			}		
 		}
-		*/
 
 		if( AdminToken.Admin_status==0 ){
 			err = errors.New("账号已停用");

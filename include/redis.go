@@ -102,6 +102,19 @@ func (c RedisConn) Get( key string ) ( value string, err error ){
 	return
 }
 
+func (c RedisConn) Del( key string ) ( err error ){
+
+	if err = c.Connect(); err != nil {
+		return
+	}
+
+	c.Conn.Do("DEL", key)
+	return
+}
+
+
+
+
 //队列管理插入队列
 func (c RedisConn) RPush( key string, val string ) ( err error ){
 	if err = c.Connect(); err != nil {
